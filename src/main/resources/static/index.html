@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Financial Services Dashboard</title>
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f7fa;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .flex-row {
+            display: flex;
+            gap: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, select, button {
+            padding: 10px;
+            width: 100%;
+            max-width: 300px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #3399cc;
+            color: white;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #287ca8;
+        }
+        #transactions {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        #transactions th, #transactions td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        #transactions th {
+            background-color: #3399cc;
+            color: white;
+        }
+        .error {
+            color: red;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Financial Services Dashboard</h1>
+
+    <!-- Payment Initiation Section -->
+    <div class="card">
+        <h2>Initiate Payment</h2>
+        <div class="flex-row">
+            <div class="form-group">
+                <label for="amount">Amount</label>
+                <input type="number" id="amount" value="1000" min="1" required>
+            </div>
+            <div class="form-group">
+                <label for="currency">Currency</label>
+                <select id="currency">
+                    <option value="INR">INR</option>
+                    <option value="USD">USD</option>
+                    <option value="EUR">EUR</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>&nbsp;</label>
+                <button id="pay-button">Pay Now</button>
+            </div>
+        </div>
+        <div id="error" class="error"></div>
+    </div>
+
+    <!-- Transaction History Section -->
+    <div class="card">
+        <h2>Transaction History</h2>
+        <table id="transactions">
+            <thead>
+            <tr>
+                <th>ID</th>
+                <th>Amount</th>
+                <th>Currency</th>
+                <th>Status</th>
+                <th>Date</th>
+                <th>Action</th>
+            </tr>
+            </thead>
+            <tbody id="transaction-body"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    const payButton = document.getElementById('pay-button');
+    const amountInput = document.getElementById('amount');
+    const currencySelect = document.getElementById('currency');
+    const errorDiv = document.getElementById('error');
+    const transactionBody = document.getElementById('transaction-body');
+
+    // Initiate Payment
+    payButton.onclick = function () {
+        const amount = amountInput.value;
+        const currency = currencySelect.value;
+
+        if (!amount || amount <= 0) {
+            errorDiv.textContent = "Please enter a valid amount.";
+            return;
+        }
+
+        errorDiv.textContent = "";
+        fetch(`http://localhost:8081/api/payments/create-order?amount=${amount}&currency=${currency}`, {
+            method: 'POST'
+        })
+            .then(response => {
+                if (!response.ok) throw new Error('Failed to create order');
+                return response.json();
+            })
+            .then(order => {
+                const options = {
+                    key: "rzp_test_3noy79rNuntsPS", // Replace with your Razorpay Key
+                    amount: order.amount, // Amount in paise
+                    currency: order.currency,
+                    name: "Your Company",
+                    description: "Test Transaction",
+                    order_id: order.id,
+                    handler: function (response) {
+                        alert("Payment Successful! Payment ID: " + response.razorpay_payment_id);
+                        fetchTransactions(); // Refresh transaction list
+                    },
+                    theme: { color: "#3399cc" }
+                };
+                const rzp = new Razorpay(options);
+                rzp.open();
+            })
+            .catch(err => {
+                errorDiv.textContent = "Error: " + err.message;
+                console.error(err);
+            });
+    };
+
+    // Fetch and Display Transactions
+    function fetchTransactions() {
+        fetch('http://localhost:8081/api/transactions', { method: 'GET' })
+            .then(response => response.json())
+            .then(transactions => {
+                transactionBody.innerHTML = '';
+                transactions.forEach(tx => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                            <td>${tx.id}</td>
+                            <td>${tx.amount / 100}</td> <!-- Convert paise to rupees -->
+                            <td>${tx.currency}</td>
+                            <td>${tx.status}</td>
+                            <td>${new Date(tx.timestamp).toLocaleString()}</td>
+                            <td><button onclick="refund('${tx.id}')">Refund</button></td>
+                        `;
+                    transactionBody.appendChild(row);
+                });
+            })
+            .catch(err => console.error("Failed to load transactions:", err));
+    }
+
+    // Refund Transaction
+    function refund(transactionId) {
+        fetch('http://localhost:8081/api/refunds', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ transactionId, idempotencyKey: `${transactionId}-${Date.now()}` })
+        })
+            .then(response => response.json())
+            .then(data => {
+                alert("Refund processed: " + data.message);
+                fetchTransactions();
+            })
+            .catch(err => console.error("Refund failed:", err));
+    }
+
+    // Load transactions on page load
+    fetchTransactions();
+</script>
+</body>
+</html>
